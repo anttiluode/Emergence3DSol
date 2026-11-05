@@ -21,12 +21,6 @@ The viewer retains the original controls, **plus K to sever all inert columns**.
 A short, headless example:
 
 ```bash
-python run.py --headless --size 48 --depth 24 --steps 10000 --out runs/vine
-```
-
-(Note: `run.py` uses `--set device=cuda`, not a `--device` flag. A correct example is below.)
-
-```bash
 python run.py --headless --size 48 --depth 24 --steps 10000 --out runs/vine --set device=auto
 python run.py --headless --size 48 --depth 24 --steps 10000 --out runs/control --set grip_enabled=0 --set twine_strength=0
 python run.py --headless --size 48 --depth 24 --steps 10000 --out runs/sever --sever-at 5000
