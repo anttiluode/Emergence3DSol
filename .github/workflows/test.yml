@@ -21,3 +21,7 @@ jobs:
         run: python -m compileall -q emergence3d run.py experiment.py
       - name: Validate support ecology
         run: python -m pytest -q tests
+      - name: Run all four experiment arms (short smoke)
+        run: |
+          python experiment.py --seeds 0 --steps 4 --log-every 2 --size 12 --depth 8 --seed-cells 24 --rods 2 --device cpu --out /tmp/vine-smoke
+          python -c "import csv; rows=list(csv.DictReader(open('/tmp/vine-smoke/summary.csv'))); assert len(rows) == 4, len(rows)"
