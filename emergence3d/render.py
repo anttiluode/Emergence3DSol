@@ -70,6 +70,16 @@ def volume(world, view="life", cell_alpha=0.55):
         alpha = af * cell_alpha
     else:
         raise ValueError(view)
+    # Draw immutable supports in slate, and current grip sites in turquoise.
+    # Markers share the same physical volume as living cells, not a UI overlay.
+    if view == "life":
+        turquoise = torch.tensor([0.10, 0.95, 0.77], device=a.device)
+        rgb = torch.where((world.grip & a)[..., None],
+                          0.40 * rgb + 0.60 * turquoise, rgb)
+    solid = world.scaffold
+    slate = torch.tensor([0.53, 0.59, 0.67], device=a.device)
+    rgb = torch.where(solid[..., None], slate, rgb)
+    alpha = torch.where(solid, torch.full_like(alpha, 0.90), alpha)
     out = torch.cat([rgb.permute(3, 0, 1, 2), alpha[None]], 0)
     if view not in ("light", "nutrient"):
         # the sea floor: sand lit by whatever light gets through, so the life above casts
@@ -78,7 +88,7 @@ def volume(world, view="life", cell_alpha=0.55):
         m = (world.M[0] / cfg.nutrient_max).clamp(0, 1)
         sand = torch.stack([0.55 + 0.1 * m, 0.45 + 0 * m, 0.30 - 0.1 * m])
         floor = sand * (0.12 + 0.6 * fl)[None]
-        empty0 = ~a[0]
+        empty0 = ~a[0] & ~world.scaffold[0]
         out[:3, 0] = torch.where(empty0[None], floor, out[:3, 0])
         out[3, 0] = torch.where(empty0, torch.full_like(fl, 0.95), out[3, 0])
     return out.clamp(0, 1)
