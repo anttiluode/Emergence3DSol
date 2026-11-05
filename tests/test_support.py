@@ -70,6 +70,10 @@ def test_vine_world_smoke_and_checkpoint(small_world):
 
 def test_sever_is_an_intervention(small_world):
     w = small_world
+    # Light in this solver is cached from the beginning of the previous step.
+    # Re-evaluate for the *current* living configuration before isolating
+    # the effect of removing the rods.
+    w._update_light()
     before = w.light.clone()
     w.sever_scaffolds()
     assert not w.scaffold.any()
