@@ -204,6 +204,14 @@ class World:
         self.light = self.sky[None] * self.depth_att * torch.exp(
             -self.cfg.cell_shade * above - self.cfg.scaffold_shade * solid_above)
 
+    @torch.no_grad()
+    def sever_scaffolds(self):
+        """Destroy the inert columns; a controlled support-loss intervention."""
+        self.scaffold.zero_()
+        self.support_near.zero_()
+        self.support_severed = True
+        self._update_light()
+
     # ------------------------------------------------------------------ step
     @torch.no_grad()
     def step(self):
@@ -481,7 +489,13 @@ class World:
              "reseeds": self.reseeds,
              "nutrient_water": float(self.M.mean()),
              "light_reaching_floor": float((self.light[0].sum() / (self.sky.sum() + 1e-9))),
-             "light_captured": float(1 - self.light[0].sum() / (self.sky.sum() * float(self.depth_att[0, 0, 0]) + 1e-9))}
+             "light_captured": float(1 - self.light[0].sum() / (self.sky.sum() * float(self.depth_att[0, 0, 0]) + 1e-9)),
+             "scaffold_cells": int(self.scaffold.sum()),
+             "scaffolds_severed": int(self.support_severed),
+             "gripped_cells": int((self.grip & a).sum()),
+             "grip_fraction": float((self.grip & a).sum()) / max(1, pop),
+             "near_rod_fraction": float((self.support_near & a).sum()) / max(1, pop),
+             "high_cell_fraction": float((a & (self.zz > 0.65 * (cfg.D - 1))).sum()) / max(1, pop)}
         if pop:
             c = cnt[live].float()
             m["clades"] = int(torch.unique(self.pool.clade[live]).numel())
@@ -520,11 +534,13 @@ class World:
 
     # ------------------------------------------------------------- persistence
     def state_dict(self):
-        keys = ["alive", "gid", "body", "energy", "nut", "S", "age", "M", "sig", "sun_pos",
+        keys = ["alive", "gid", "body", "energy", "nut", "S", "age", "phase", "grip",
+                "scaffold", "M", "sig", "sun_pos",
                 "sun_vel", "photo", "gamma", "beta", "obias", "color", "lin_state"]
         d = {k: getattr(self, k).cpu() for k in keys}
         d["pool"] = {k: (v.cpu() if torch.is_tensor(v) else v)
                      for k, v in self.pool.state_dict().items()}
+        d["scaffolds_severed"] = self.support_severed
         d["next_body"] = self.next_body
         d["t"], d["births"], d["deaths"], d["reseeds"] = self.t, int(self.births), int(self.deaths), self.reseeds
         d["config"] = self.cfg.__dict__.copy()
@@ -536,6 +552,11 @@ class World:
             setattr(self, k, d[k].to(self.device))
         if "photo" in d:
             self.photo = d["photo"].to(self.device)
+        for field in ("phase", "grip", "scaffold"):
+            if field in d:
+                setattr(self, field, d[field].to(self.device))
+        self.support_near = contact_shell(self.scaffold)
+        self.support_severed = bool(d.get("scaffolds_severed", False))
         for k in ["gamma", "beta", "obias", "color", "lin_state"]:
             src = d[k].to(self.device)
             getattr(self, k)[:src.shape[0]] = src
