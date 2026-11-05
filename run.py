@@ -114,6 +114,9 @@ def headless(w, args):
     t0, s0 = time.time(), w.t
     end = w.t + args.steps
     while w.t < end:
+        if args.sever_at >= 0 and w.t == args.sever_at:
+            w.sever_scaffolds()
+            print(f"SEVER: removed inert support columns at step {w.t}", flush=True)
         w.step()
         if w.t % args.log_every == 0:
             m = w.metrics()
@@ -149,6 +152,8 @@ LABELS = [("population", "cells"), ("bodies", "organisms"),
           ("genomes", "genomes alive"), ("clades", "founding clades"),
           ("mean_depth", "mutations (mean)"), ("mean_genome_len", "genome length"),
           ("kin_neighbours", "body-mate neighbours"), ("stranger_neighbours", "stranger neighbours"),
+          ("grip_fraction", "attached fraction"), ("near_rod_fraction", "near supports"),
+          ("high_cell_fraction", "high cells"), ("scaffold_cells", "rod voxels"),
           ("top_genome_share", "top genome share"), ("mean_energy", "energy / cell"),
           ("mean_age", "age / cell"), ("genome_table_used", "genome table used"),
           ("reseeds", "reseeds")]
@@ -242,6 +247,9 @@ def viewer(w, args):
                     spf = max(1, spf // 2)
                 elif k == pygame.K_r:
                     w.seed_life(500)
+                elif k == pygame.K_k:
+                    w.sever_scaffolds()
+                    print(f"SEVER: support columns removed at step {w.t}")
                 elif k == pygame.K_s:
                     p = os.path.join(args.out, f"ckpt_{w.t:07d}.pt")
                     torch.save(w.state_dict(), p); print("saved", p)
@@ -285,6 +293,8 @@ def viewer(w, args):
 
         if not paused:
             for _ in range(spf):
+                if args.sever_at >= 0 and w.t == args.sever_at:
+                    w.sever_scaffolds()
                 w.step()
         if orbit:
             yaw += 0.006
@@ -367,6 +377,7 @@ def main():
     ap.add_argument("--set", action="append", help="override a law, e.g. --set regulation=0")
     ap.add_argument("--load", type=str, default="")
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--sever-at", type=int, default=-1, help="remove scaffolds at simulation step N; -1 disables")
     ap.add_argument("--steps", type=int, default=100000)
     ap.add_argument("--out", type=str, default="runs/default")
     ap.add_argument("--log-every", type=int, default=500)
