@@ -35,6 +35,7 @@ import torch
 
 from .genome import GenomePool
 from .translator import Translator
+from .support import make_scaffold, contact_shell, drag_loss
 
 # six face neighbours: (dz, dy, dx)
 DIRS = [(0, 0, 1), (0, 0, -1), (0, 1, 0), (0, -1, 0), (1, 0, 0), (-1, 0, 0)]
@@ -61,8 +62,8 @@ class World:
         if cfg.max_genomes <= 0:
             cfg.max_genomes = max(32768, (D * H * W) // 32)
 
-        self.n_actions = C + Q + 1 + 1 + 1 + 6 + 1 + 1
-        self.n_percept = 2 * C + 4 * Q + 13
+        self.n_actions = C + Q + 1 + 1 + 1 + 6 + 1 + 1 + 2  # adhesion + phase speed
+        self.n_percept = 2 * C + 4 * Q + 15  # scaffold / foreign-host proximity
         self.state_dim = C + 5
 
         # ---- shared cell network (fixed, seeded) -------------------------------------
@@ -91,6 +92,9 @@ class World:
         self.valid[DOWN] = z > 0
         self.n_valid = sum(v.float() for v in self.valid)
         self.depth_att = torch.exp(-(D - 1 - self.zz) / (cfg.water_clarity * D))
+        self.scaffold = make_scaffold(cfg, self.device)
+        self.support_near = contact_shell(self.scaffold)
+        self.support_severed = False
         yy, xx = torch.meshgrid(torch.arange(H, device=self.device, dtype=torch.float32),
                                 torch.arange(W, device=self.device, dtype=torch.float32),
                                 indexing="ij")
@@ -106,6 +110,8 @@ class World:
         self.nut = zf(D, H, W)            # nutrient held by cells
         self.S = zf(C, D, H, W)
         self.age = zf(D, H, W)
+        self.phase = zf(D, H, W)       # local circumnutation angle carried by descendants
+        self.grip = torch.zeros(D, H, W, dtype=torch.bool, device=self.device)
         self.M = zf(D, H, W) + cfg.nutrient_floor * 0.5     # nutrient in the water
         self.sig = zf(Q, D, H, W)
         self.light = zf(D, H, W)
@@ -153,7 +159,7 @@ class World:
     def seed_life(self, n):
         """Abiogenesis: n random cells with random genomes, anywhere in the water."""
         cfg = self.cfg
-        empty = torch.nonzero(~self.alive.flatten()).flatten()
+        empty = torch.nonzero((~self.alive & ~self.scaffold).flatten()).flatten()
         if empty.numel() == 0:
             return
         pick = empty[torch.randperm(empty.numel(), generator=self.gen, device=self.device)[:n]]
@@ -168,6 +174,7 @@ class World:
         self.energy.view(-1)[pick] = 0.8
         self.nut.view(-1)[pick] = 0.3
         self.age.view(-1)[pick] = 0
+        self.phase.view(-1)[pick] = self.rand(pick.numel()) * (2 * math.pi)
         S = self.S.view(cfg.n_state, -1)
         S[:, pick] = 0.1 * torch.randn(cfg.n_state, pick.numel(), generator=self.gen, device=self.device)
         self.pool.recount(self.gid[self.alive])
@@ -192,7 +199,10 @@ class World:
         """Light at every voxel: sky x water attenuation x shading by the cells above."""
         aF = self.alive.float()
         above = torch.flip(torch.cumsum(torch.flip(aF, [0]), 0), [0]) - aF
-        self.light = self.sky[None] * self.depth_att * torch.exp(-self.cfg.cell_shade * above)
+        sf = self.scaffold.float()
+        solid_above = torch.flip(torch.cumsum(torch.flip(sf, [0]), 0), [0]) - sf
+        self.light = self.sky[None] * self.depth_att * torch.exp(
+            -self.cfg.cell_shade * above - self.cfg.scaffold_shade * solid_above)
 
     # ------------------------------------------------------------------ step
     @torch.no_grad()
