@@ -1,0 +1,26 @@
+{
+  "settings": {
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "steps": 4000,
+    "log_every": 200,
+    "depth": 24,
+    "size": 48,
+    "seed_cells": 1200,
+    "rods": 12,
+    "drag": 0.008,
+    "device": "cuda",
+    "sever_at": -1,
+    "out": "runs\\vines",
+    "checkpoints": false
+  },
+  "arms": [
+    "vine",
+    "grip_no_twine",
+    "no_grip",
+    "no_rods"
+  ]
+}
