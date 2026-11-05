@@ -66,6 +66,20 @@ class Config:
     share_rate: float = 0.20       # max fraction of energy AND nutrient sent to each body-mate
     decompose: float = 0.6         # fraction of a dead cell's energy returned (as nutrient)
 
+    # ---- vine ecology: independent supports and costly exposure -----------------------
+    # Inert rod voxels are *occupied*: cells cannot be born inside them.
+    scaffold_columns: int = 18
+    scaffold_height: float = 0.92    # fraction of the box height reached by each column
+    scaffold_shade: float = 0.12     # inert rods absorb some sunlight
+    current_drag: float = 0.008     # extra metabolic cost near the surface
+    current_power: float = 1.5      # exposure rises with altitude
+    grip_enabled: bool = True       # ablate benefit without removing obstacles
+    grip_relief: float = 0.90       # fraction of exposure avoided by attaching
+    grip_cost: float = 0.0005       # attachment itself consumes energy
+    twine_strength: float = 1.0     # phase-guided growth bias, 0 = no twining
+    twine_up_bias: float = 0.50     # favor climbing along a support
+    phase_advance: float = 0.55     # radians per step, modulated by the genome's output
+
     # ---- ageing ------------------------------------------------------------------
     hazard_base: float = 0.0004
     age_onset: int = 300
