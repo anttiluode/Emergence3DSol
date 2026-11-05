@@ -226,6 +226,8 @@ class World:
         kin = nb_alive & (nb_body == body[None]) & alive[None]
         alien = nb_alive & (nb_body != body[None]) & alive[None]
         twin = alien & (nb_gid == gid[None])
+        host_contact = alien.any(0)
+        support_contact = self.support_near | host_contact
         n_occ = nb_alive.float().sum(0)
         S_nb = sum(self.nbv(self.S, d) for d in range(6)) / n_occ.clamp(min=1)
         mgx, mgy, mgz = self.grads(self.M)
@@ -240,6 +242,7 @@ class World:
             S_nb,
             kin.float().sum(0)[None] / 6, alien.float().sum(0)[None] / 6,
             twin.float().sum(0)[None] / 6,
+            self.support_near.float()[None], host_contact.float()[None],
             (self.n_valid - n_occ)[None] / 6,
             torch.ones_like(E)[None],
         ])
@@ -265,6 +268,13 @@ class World:
         dirlog = out[k:k + 6]; k += 6
         attack = torch.sigmoid(out[k]) * aF; k += 1
         detach = torch.sigmoid(out[k]) * aF; k += 1
+        adhesion = torch.sigmoid(out[k]) * aF; k += 1
+        twist = torch.sigmoid(out[k]) * aF; k += 1
+        # Locally chosen adhesion to a fixed rod or a living *foreign* body.
+        # A living host contributes contact only; it does not share energy or merge IDs.
+        grip = alive & support_contact & (adhesion > 0.5) & bool(cfg.grip_enabled)
+        self.phase = ((self.phase + cfg.phase_advance * (0.25 + 1.5 * twist))
+                      % (2 * math.pi)) * aF
 
         # ---------------- internal state ------------------------------------------------
         self.S = (0.7 * self.S + 0.3 * torch.tanh(dS)) * aF
@@ -299,7 +309,10 @@ class World:
         E = E - lost + cfg.attack_eff * took.sum(0)
 
         # ---------------- costs -------------------------------------------------------------
-        E = E - aF * (cfg.metabolism + cfg.emit_cost * emit.sum(0) + cfg.attack_cost * attack)
+        exposed_height = self.zz / max(1, D - 1)
+        stress = drag_loss(exposed_height, grip, cfg)
+        E = E - aF * (cfg.metabolism + cfg.emit_cost * emit.sum(0)
+                        + cfg.attack_cost * attack + stress)
         E = E.clamp(max=cfg.e_max) * aF
         N = N.clamp(0, cfg.n_max) * aF
 
@@ -310,6 +323,7 @@ class World:
         back = die.float() * (E.clamp(min=0) * cfg.decompose * cfg.n_per_e + N)
         self.M = (self.M + back).clamp(max=cfg.nutrient_max)
         alive = alive & ~die
+        grip = grip & alive
         aF = alive.float()
         E = E * aF
         N = N * aF
@@ -320,10 +334,24 @@ class World:
 
         # ---------------- division into one of six neighbours ----------------------------------
         want = alive & (E > cfg.e_divide) & (self.rand(D, H, W) < divide)
+        # Phase-biased, stair-stepped twining: the orientation rotates in time.
+        # Directional bias is only active while a cell grips a support.
+        if cfg.twine_strength:
+            amp = cfg.twine_strength * grip.float()
+            cx, sy = self.phase.cos(), self.phase.sin()
+            dirlog = dirlog.clone()
+            dirlog[0] += amp * cx
+            dirlog[1] -= amp * cx
+            dirlog[2] += amp * sy
+            dirlog[3] -= amp * sy
+            dirlog[UP] += amp * cfg.twine_up_bias
+            # Prefer destinations that remain in the 26-neighbour shell of a rod.
+            for d in range(6):
+                dirlog[d] += 0.8 * amp * self.nbv(self.support_near, d, False).float()
         gum = -torch.log(-torch.log(self.rand(6, D, H, W).clamp(1e-9, 1 - 1e-9)))
         d_choice = (dirlog + gum).argmax(0)
         wd = [want & (d_choice == d) & self.valid[d] for d in range(6)]
-        empty = ~alive
+        empty = ~alive & ~self.scaffold
         pr = self.rand(D, H, W)
         claims = torch.stack([self.valid[d] & nb(wd[OPP[d]], d) & empty for d in range(6)])
         prio = torch.stack([nb(pr, d) for d in range(6)])
@@ -336,6 +364,7 @@ class World:
         sel = win[None]
         pick = lambda x: torch.gather(torch.stack([nb(x, d) for d in range(6)]), 0, sel)[0]
         pE, pN, pG, pB, pD = pick(E), pick(N), pick(gid), pick(body), pick(detach)
+        p_phase = pick(self.phase)
         leaves = newborn & (self.rand(D, H, W) < pD)
         fresh = self.next_body + torch.arange(D * H * W, device=self.device).view(D, H, W)
         pB = torch.where(leaves, fresh, pB)
@@ -351,6 +380,7 @@ class World:
         body = torch.where(newborn, pB, body)
         self.S = torch.where(newborn[None], pS, self.S)
         self.age = torch.where(newborn, torch.zeros_like(self.age), self.age)
+        self.phase = torch.where(newborn, p_phase, self.phase)
         alive = alive | newborn
         self.births += newborn.sum()
 
@@ -375,6 +405,7 @@ class World:
 
         # ---------------- commit ------------------------------------------------------------------
         self.alive, self.gid, self.energy, self.nut, self.body = alive, gid, E, N, body
+        self.grip = grip
         self.age = (self.age + 1) * alive.float()
         self.pool.recount(gid[alive])
         self.t += 1
